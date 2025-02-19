@@ -1,67 +1,78 @@
-var mongoose = require('mongoose')
-  , lib = require('../lib/explorer')
-  , db = require('../lib/database')
-  , settings = require('../lib/settings')
-  , request = require('request');
+const mongoose = require('mongoose');
+const lib = require('../lib/explorer');
+const db = require('../lib/database');
+const settings = require('../lib/settings');
 
-var COUNT = 5000; //number of blocks to index
-
-function exit() {
-  mongoose.disconnect();
-  process.exit(0);
+async function exit()
+{
+	await mongoose.disconnect();
+	process.exit(0);
 }
 
-var dbString = 'mongodb://' + settings.dbsettings.user;
-dbString = dbString + ':' + settings.dbsettings.password;
-dbString = dbString + '@' + settings.dbsettings.address;
-dbString = dbString + ':' + settings.dbsettings.port;
-dbString = dbString + '/' + settings.dbsettings.database;
+const dbString = `mongodb://${settings.dbsettings.user}:${settings.dbsettings.password}@${settings.dbsettings.address}:${settings.dbsettings.port}/${settings.dbsettings.database}`;
 
-mongoose.connect(dbString, function(err) {
-  if (err) {
-    console.log('Unable to connect to database: %s', dbString);
-    console.log('Aborting');
-    exit();
-  } else {
-    request({uri: 'http://127.0.0.1:' + settings.port + '/api/getpeerinfo', json: true}, function (error, response, body) {
-      lib.syncLoop(body.length, function (loop) {
-        var i = loop.iteration();
-        var portSplit = body[i].addr.lastIndexOf(":");
-        var port = "";
-        if (portSplit < 0) {
-          portSplit = body[i].addr.length;
-        } else {
-          port = body[i].addr.substring(portSplit+1);
-        }
-        var address = body[i].addr.substring(0,portSplit);
-        db.find_peer(address, function(peer) {
-          if (peer) {
-            if (isNaN(peer['port']) || peer['port'].length < 2 || peer['country'].length < 1 || peer['country_code'].length < 1) {
-              db.drop_peers(function() {
-                console.log('Saved peers missing ports or country, dropping peers. Re-reun this script afterwards.');
-                exit();
-              });
-            }
-            // peer already exists
-            loop.next();
-          } else {
-            request({uri: 'https://reallyfreegeoip.org/json/' + address, json: true}, function (error, response, geo) {
-              db.create_peer({
-                address: address,
-                port: port,
-                protocol: body[i].version,
-                version: body[i].subver.replace('/', '').replace('/', ''),
-                country: geo.country_name,
-                country_code: geo.country_code
-              }, function(){
-                loop.next();
-              });
-            });
-          }
-        });
-      }, function() {
-        exit();
-      });
-    });
-  }
-});
+async function main()
+{
+	try
+	{
+		await mongoose.connect(dbString);
+		console.log('Connected to MongoDB');
+
+		const response = await fetch(`http://127.0.0.1:${settings.port}/api/getpeerinfo`);
+		const body = await response.json();
+
+		await lib.syncLoop(body.length, async function (loop)
+		{
+			const i = loop.iteration();
+			const peerData = body[i];
+
+			// Разделяем IP и порт
+			const portSplit = peerData.addr.lastIndexOf(":");
+			const port = portSplit < 0 ? "" : peerData.addr.substring(portSplit + 1);
+			const address = peerData.addr.substring(0, portSplit < 0 ? peerData.addr.length : portSplit);
+
+			try
+			{
+				const peer = await db.find_peer(address);
+				if (peer)
+				{
+					if (!peer.port || !peer.country || !peer.country_code)
+					{
+						await db.drop_peers();
+						console.log('Saved peers missing ports or country, dropping peers. Re-reun this script afterwards.');
+						exit();
+					}
+					return loop.next();
+				}
+
+				const geoResponse = await fetch(`https://reallyfreegeoip.org/json/${address}`);
+				const geo = await geoResponse.json();
+
+				await db.create_peer({
+					address: address,
+					port: port,
+					protocol: peerData.version,
+					version: peerData.subver.replace(/\//g, ''),
+					country: geo.country_name || 'Unknown',
+					country_code: geo.country_code || 'XX'
+				});
+
+				loop.next();
+			}
+			catch (error)
+			{
+				console.error(`Error processing node ${address}:`, error);
+				loop.next();
+			}
+		});
+
+		exit();
+	}
+	catch (error)
+	{
+		console.error('Error connection to DB:', error);
+		exit();
+	}
+}
+
+main();
