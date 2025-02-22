@@ -13,9 +13,9 @@ const express = require('express')
 	, locale = require('./lib/locale')
 	, axios = require('axios');
 
-var app = express();
+const app = express();
 
-// bitcoinapi configuration
+// bitcoinapi
 bitcoinapi.setWalletDetails(settings.wallet);
 if (settings.heavy != true)
 {
@@ -24,12 +24,23 @@ if (settings.heavy != true)
 }
 else
 {
+	// enable additional heavy api calls
+	/*
+	  getvote - Returns the current block reward vote setting.
+	  getmaxvote - Returns the maximum allowed vote for the current phase of voting.
+	  getphase - Returns the current voting phase ('Mint', 'Limit' or 'Sustain').
+	  getreward - Returns the current block reward, which has been decided democratically in the previous round of block reward voting.
+	  getnextrewardestimate - Returns an estimate for the next block reward based on the current state of decentralized voting.
+	  getnextrewardwhenstr - Returns string describing how long until the votes are tallied and the next block reward is computed.
+	  getnextrewardwhensec - Same as above, but returns integer seconds.
+	  getsupply - Returns the current money supply.
+	  getmaxmoney - Returns the maximum possible money supply.
+	*/
 	bitcoinapi.setAccess('only', ['getinfo', 'getstakinginfo', 'getnetworkhashps', 'getdifficulty', 'getconnectioncount',
 		'getblockcount', 'getblockhash', 'getblock', 'getrawtransaction', 'getmaxmoney', 'getvote',
 		'getmaxvote', 'getphase', 'getreward', 'getnextrewardestimate', 'getnextrewardwhenstr',
 		'getnextrewardwhensec', 'getsupply', 'gettxoutsetinfo', 'verifymessage']);
 }
-
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'pug');
@@ -133,9 +144,10 @@ app.use('/ext/gettx/:txid', function (req, res)
 						{
 							lib.calculate_total(rvout, function (total)
 							{
+								let utx;
 								if (!(rtx.confirmations > 0))
 								{
-									var utx = {
+									utx = {
 										txid: rtx.txid,
 										vin: rvin,
 										vout: rvout,
@@ -153,7 +165,7 @@ app.use('/ext/gettx/:txid', function (req, res)
 								}
 								else
 								{
-									var utx = {
+									utx = {
 										txid: rtx.txid,
 										vin: rvin,
 										vout: rvout,
@@ -278,6 +290,7 @@ app.use('/ext/getaddresstxsajax/:address', function (req, res)
 						out += r.amount;
 					}
 				});
+
 				txs[i].vin.forEach(function (s)
 				{
 					if (s.addresses == req.params.address)
@@ -285,6 +298,7 @@ app.use('/ext/getaddresstxsajax/:address', function (req, res)
 						vin += s.amount;
 					}
 				});
+
 				const row = [];
 				row.push(new Date((txs[i].timestamp) * 1000).toUTCString());
 				row.push(txs[i].txid);
@@ -294,44 +308,42 @@ app.use('/ext/getaddresstxsajax/:address', function (req, res)
 				data.push(row);
 			}
 		}
+
 		res.json({"data": data, "draw": req.query.draw, "recordsTotal": count, "recordsFiltered": count});
 	});
 });
 
-// Updated claim route using axios instead of request
 app.post('/address/:hash/claim', function (req, res)
 {
 	const address = req.body.address;
 	const signature = req.body.signature;
 	const message = req.body.message;
-
 	axios.get('http://127.0.0.1:' + settings.port + '/api/verifymessage', {
 		params: {
 			address: address,
 			signature: signature,
 			message: message
 		}
-	})
-		.then(function (response)
+	}).then(function (body)
+	{
+		//console.log('response', body);
+		if (body.data === "false")
 		{
-			if (response.data === "false")
-			{
-				console.log('failed');
-				res.json({"status": "failed", "error": true, "message": "Verification failed"});
-			}
-			else if (response.data === "true")
-			{
-				db.update_label(address, message, function ()
-				{
-					res.json({"status": "success"});
-				});
-			}
-		})
-		.catch(function (error)
+			console.log('failed');
+			res.json({"status": "failed", "error": true, "message": body});
+		}
+		else if (body.data === "true")
 		{
-			console.error('Error in claim:', error.message);
-			res.json({"status": "failed", "error": true, "message": error.message});
-		});
+			db.update_label(address, message, function ()
+			{
+				res.json({"status": "success"});
+			})
+		}
+	}).catch(function (error)
+	{
+		console.error('Error in claim:', error.message);
+		res.json({"status": "failed", "error": true, "message": error.message});
+	});
 });
 
 app.use('/ext/connections', function (req, res)
@@ -377,7 +389,8 @@ app.use(function (req, res, next)
 	next(err);
 });
 
-// development error handler: will print stacktrace
+// development error handler
+// will print stacktrace
 if (app.get('env') === 'development')
 {
 	app.use(function (err, req, res, next)
@@ -390,7 +403,8 @@ if (app.get('env') === 'development')
 	});
 }
 
-// production error handler: no stacktraces leaked to user
+// production error handler
+// no stacktraces leaked to user
 app.use(function (err, req, res, next)
 {
 	res.status(err.status || 500);

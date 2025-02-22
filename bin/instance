@@ -16,12 +16,11 @@ db.connect(dbString, function ()
 {
 	db.check_stats(settings.coin, function (exists)
 	{
-		if (!exists)
+		if (exists == false)
 		{
 			console.log('no stats entry found, creating now..');
 			db.create_stats(settings.coin, function ()
 			{
-				console.log('stats entry created successfully.');
 			});
 		}
 		else
